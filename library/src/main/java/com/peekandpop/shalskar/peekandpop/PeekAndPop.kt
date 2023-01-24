@@ -1,227 +1,170 @@
-package com.peekandpop.shalskar.peekandpop;
+package com.peekandpop.shalskar.peekandpop
 
-import android.animation.Animator;
-import android.app.Activity;
-import android.content.res.Configuration;
-import android.graphics.drawable.BitmapDrawable;
-import android.os.Build;
-import android.os.Handler;
-import android.os.Looper;
-import android.os.SystemClock;
-import android.support.annotation.IdRes;
-import android.support.annotation.IntDef;
-import android.support.annotation.LayoutRes;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
-import android.util.Log;
-import android.view.GestureDetector;
-import android.view.Gravity;
-import android.view.LayoutInflater;
-import android.view.MotionEvent;
-import android.view.View;
-import android.view.ViewGroup;
-import android.view.ViewTreeObserver;
-import android.widget.FrameLayout;
+import android.animation.Animator
+import android.animation.Animator.AnimatorListener
+import android.app.Activity
+import android.content.res.Configuration
+import android.graphics.drawable.BitmapDrawable
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.*
+import android.view.GestureDetector.SimpleOnGestureListener
+import android.view.View.OnTouchListener
+import android.widget.FrameLayout
+import androidx.annotation.IdRes
+import androidx.annotation.IntDef
+import androidx.annotation.LayoutRes
+import com.peekandpop.shalskar.peekandpop.model.HoldAndReleaseView
+import com.peekandpop.shalskar.peekandpop.model.LongHoldView
+import java.util.*
 
-import com.peekandpop.shalskar.peekandpop.model.HoldAndReleaseView;
-import com.peekandpop.shalskar.peekandpop.model.LongHoldView;
+class PeekAndPop(builder: Builder) {
+    @IntDef(value = [FLING_UPWARDS, FLING_DOWNWARDS])
+    annotation class FlingDirections
 
-import java.util.ArrayList;
-import java.util.Timer;
-import java.util.TimerTask;
+    lateinit var peekView: View
+        private set
+    private lateinit var contentView: ViewGroup
+    private lateinit var peekLayout: ViewGroup
+    private lateinit var peekAnimationHelper: PeekAnimationHelper
+    var isBlurBackground = false
+    var isAnimateFling = false
+    private var allowUpwardsFling = false
+    private var allowDownwardsFling = false
+    private var customLongHoldDuration = -1
+    var isEnabled = true
+    private var longHoldViews: ArrayList<LongHoldView> = ArrayList()
+    private var holdAndReleaseViews: ArrayList<HoldAndReleaseView> = ArrayList()
+    var currentHoldAndReleaseView: HoldAndReleaseView? = null
+    private var onFlingToActionListener: OnFlingToActionListener? = null
+    private var onGeneralActionListener: OnGeneralActionListener? = null
+    private var onLongHoldListener: OnLongHoldListener? = null
+    private var onHoldAndReleaseListener: OnHoldAndReleaseListener? = null
+    private var gestureListener = GestureListener()
+    private var gestureDetector: GestureDetector
+    private var longHoldTimer = Timer()
+    private var orientation = 0
+    private var peekViewOriginalPosition: FloatArray? = null
+    private var peekViewMargin = 0
+    private var downX = 0
+    private var downY = 0
+    private var popTime: Long = 0
+    private var usedBuilder: Builder? = null
 
-public class PeekAndPop {
-
-    @IntDef({FLING_UPWARDS, FLING_DOWNWARDS})
-    public @interface FlingDirections {
-    }
-
-    public static final int FLING_UPWARDS = 0;
-    public static final int FLING_DOWNWARDS = 1;
-
-    private static final int PEEK_VIEW_MARGIN = 12;
-
-    protected static final long LONG_CLICK_DURATION = 200;
-    protected static final long LONG_HOLD_DURATION = 850;
-    protected static final long HOLD_AND_RELEASE_DURATION = 50;
-
-    private static final int FLING_VELOCITY_THRESHOLD = 3000;
-    private static final float FLING_VELOCITY_MAX = 1000;
-
-    protected static final int ANIMATION_PEEK_DURATION = 275;
-    protected static final int ANIMATION_POP_DURATION = 250;
-
-    protected Builder builder;
-    protected View peekView;
-    protected ViewGroup contentView;
-    protected ViewGroup peekLayout;
-    protected PeekAnimationHelper peekAnimationHelper;
-
-    private boolean blurBackground;
-    private boolean animateFling;
-    private boolean allowUpwardsFling;
-    private boolean allowDownwardsFling;
-    private int customLongHoldDuration = -1;
-    private boolean enabled = true;
-
-    protected ArrayList<LongHoldView> longHoldViews;
-    protected ArrayList<HoldAndReleaseView> holdAndReleaseViews;
-    protected HoldAndReleaseView currentHoldAndReleaseView;
-    protected OnFlingToActionListener onFlingToActionListener;
-
-    protected OnGeneralActionListener onGeneralActionListener;
-    protected OnLongHoldListener onLongHoldListener;
-    protected OnHoldAndReleaseListener onHoldAndReleaseListener;
-    protected GestureListener gestureListener;
-    protected GestureDetector gestureDetector;
-    private Timer longHoldTimer = new Timer();
-
-    protected int orientation;
-    protected float[] peekViewOriginalPosition;
-    protected int peekViewMargin;
-    protected int downX, downY;
-    protected long popTime;
-
-
-    public PeekAndPop(Builder builder) {
-        this.builder = builder;
-        init();
-    }
-
-    protected void init() {
-        this.onFlingToActionListener = builder.onFlingToActionListener;
-        this.onGeneralActionListener = builder.onGeneralActionListener;
-        this.onLongHoldListener = builder.onLongHoldListener;
-        this.onHoldAndReleaseListener = builder.onHoldAndReleaseListener;
-        this.gestureListener = new GestureListener();
-        this.gestureDetector = new GestureDetector(builder.activity, this.gestureListener);
-        initialiseGestureListeners();
-
-        this.longHoldViews = new ArrayList<>();
-        this.holdAndReleaseViews = new ArrayList<>();
-
-        this.blurBackground = builder.blurBackground;
-        this.animateFling = builder.animateFling;
-        this.allowUpwardsFling = builder.allowUpwardsFling;
-        this.allowDownwardsFling = builder.allowDownwardsFling;
-
-        this.orientation = builder.activity.getResources().getConfiguration().orientation;
-        this.peekViewMargin = DimensionUtil.convertDpToPx(builder.activity.getApplicationContext(), PEEK_VIEW_MARGIN);
-
-        initialisePeekView();
+    init {
+        onFlingToActionListener = builder.onFlingToActionListener
+        onGeneralActionListener = builder.onGeneralActionListener
+        onLongHoldListener = builder.onLongHoldListener
+        onHoldAndReleaseListener = builder.onHoldAndReleaseListener
+        gestureDetector = GestureDetector(builder.activity, gestureListener)
+        initialiseGestureListeners(builder)
+        isBlurBackground = builder.blurBackground
+        isAnimateFling = builder.animateFling
+        allowUpwardsFling = builder.allowUpwardsFling
+        allowDownwardsFling = builder.allowDownwardsFling
+        orientation = builder.activity.resources.configuration.orientation
+        peekViewMargin = DimensionUtil.convertDpToPx(builder.activity.applicationContext, PEEK_VIEW_MARGIN)
+        initialisePeekView(builder)
     }
 
     /**
      * Inflate the peekView, add it to the peekLayout with a shaded/blurred background,
      * bring it to the front and set the peekLayout to have an alpha of 0. Get the peekView's
      * original Y position for use when dragging.
-     * <p/>
+     *
+     *
      * If a flingToActionViewLayoutId is supplied, inflate the flingToActionViewLayoutId.
      */
-    protected void initialisePeekView() {
-        LayoutInflater inflater = LayoutInflater.from(builder.activity);
-        contentView = (ViewGroup) builder.activity.findViewById(android.R.id.content).getRootView();
+    private fun initialisePeekView(builder: Builder) {
+        val inflater = LayoutInflater.from(builder.activity)
+        contentView = builder.activity.findViewById<View>(android.R.id.content).rootView as ViewGroup
 
         // Center onPeek view in the onPeek layout and add to the container view group
-        peekLayout = (FrameLayout) inflater.inflate(R.layout.peek_background, contentView, false);
-        peekView = inflater.inflate(builder.peekLayoutId, peekLayout, false);
-        peekView.setId(R.id.peek_view);
+        peekLayout = inflater.inflate(R.layout.peek_background, contentView, false) as FrameLayout
+        peekView = inflater.inflate(builder.peekLayoutId, peekLayout, false)
+        peekView.id = R.id.peek_view
 
-        FrameLayout.LayoutParams layoutParams = (FrameLayout.LayoutParams) peekView.getLayoutParams();
-        layoutParams.gravity = Gravity.CENTER;
-        if (orientation == Configuration.ORIENTATION_LANDSCAPE)
-            layoutParams.topMargin = peekViewMargin;
+        val layoutParams = peekView.layoutParams as FrameLayout.LayoutParams
+        layoutParams.gravity = Gravity.CENTER
 
-        peekLayout.addView(peekView, layoutParams);
-        contentView.addView(peekLayout);
+        if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            layoutParams.topMargin = peekViewMargin
+        }
 
-        peekLayout.setVisibility(View.GONE);
-        peekLayout.setAlpha(0);
-        peekLayout.requestLayout();
-
-        peekAnimationHelper = new PeekAnimationHelper(builder.activity.getApplicationContext(), peekLayout, peekView);
-
-        bringViewsToFront();
-        initialiseViewTreeObserver();
-        resetViews();
+        peekLayout.addView(peekView, layoutParams)
+        contentView.addView(peekLayout)
+        peekLayout.visibility = View.GONE
+        peekLayout.alpha = 0f
+        peekLayout.requestLayout()
+        peekAnimationHelper = PeekAnimationHelper(builder.activity.applicationContext, peekLayout, peekView)
+        bringViewsToFront()
+        initialiseViewTreeObserver()
+        resetViews()
     }
 
     /**
      * If lollipop or above, use elevation to bring peek views to the front
      */
-    private void bringViewsToFront() {
-        if (Build.VERSION.SDK_INT >= 21) {
-            peekLayout.setElevation(10f);
-            peekView.setElevation(10f);
-        } else {
-            peekLayout.bringToFront();
-            peekView.bringToFront();
-            contentView.requestLayout();
-            contentView.invalidate();
-        }
+    private fun bringViewsToFront() {
+        peekLayout.elevation = 10f
+        peekView.elevation = 10f
     }
 
     /**
      * Once the onPeek view has inflated fully, this will also update if the view changes in size change
      */
-    private void initialiseViewTreeObserver() {
-        peekView.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
-            @Override
-            public void onGlobalLayout() {
-                initialisePeekViewOriginalPosition();
-            }
-        });
+    private fun initialiseViewTreeObserver() {
+        peekView.viewTreeObserver.addOnGlobalLayoutListener { initialisePeekViewOriginalPosition() }
     }
 
     /**
      * Set an onClick and onTouch listener for each long click view.
      */
-    protected void initialiseGestureListeners() {
-        for (int i = 0; i < builder.longClickViews.size(); i++) {
-            initialiseGestureListener(builder.longClickViews.get(i), -1);
+    private fun initialiseGestureListeners(builder: Builder) {
+        for (i in builder.longClickViews.indices) {
+            initialiseGestureListener(builder.longClickViews[i], -1)
         }
-        gestureDetector.setIsLongpressEnabled(false);
+        gestureDetector.setIsLongpressEnabled(false)
     }
 
-    protected void initialiseGestureListener(@NonNull View view, int position) {
-        view.setOnTouchListener(new PeekAndPopOnTouchListener(position));
+    private fun initialiseGestureListener(view: View, position: Int) {
+        view.setOnTouchListener(PeekAndPopOnTouchListener(position))
+
         // onTouchListener will not work correctly if the view doesn't have an
         // onClickListener set, hence adding one if none has been added.
-        if(!view.hasOnClickListeners()){
-            view.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                }
-            });
+        if (view.hasOnClickListeners().not()) {
+            view.setOnClickListener { }
         }
     }
 
     /**
      * Check if user has moved or lifted their finger.
-     * <p/>
+     *
+     *
      * If lifted, onPop the view and check if their is a drag to action listener, check
      * if it had been dragged enough and send an event if so.
-     * <p/>
+     *
+     *
      * If moved, check if the user has entered the bounds of the onPeek view.
      * If the user is within the bounds, and is at the edges of the view, then
      * move it appropriately.
      */
-    protected void handleTouch(@NonNull View view, @NonNull MotionEvent event, int position) {
-        if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
-            pop(view, position);
-        } else if (event.getAction() == MotionEvent.ACTION_MOVE) {
-            downX = (int) event.getRawX();
-            downY = (int) event.getRawY();
-
-            if (onLongHoldListener != null)
-                checkLongHoldViews(position);
-
-            if (onHoldAndReleaseListener != null)
-                checkHoldAndReleaseViews(position);
+    private fun handleTouch(view: View, event: MotionEvent, position: Int) {
+        if (event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL) {
+            pop(view, position)
+        } else if (event.action == MotionEvent.ACTION_MOVE) {
+            downX = event.rawX.toInt()
+            downY = event.rawY.toInt()
+            onLongHoldListener?.run {
+                checkLongHoldViews(position)
+            }
+            onHoldAndReleaseListener?.run {
+                checkHoldAndReleaseViews(position)
+            }
         }
 
-        if (gestureDetector != null)
-            gestureDetector.onTouchEvent(event);
+        gestureDetector.onTouchEvent(event)
     }
 
     /**
@@ -230,22 +173,21 @@ public class PeekAndPop {
      *
      * @param position
      */
-    private void checkLongHoldViews(final int position) {
-        for (int i = 0; i < longHoldViews.size(); i++) {
-            final LongHoldView longHoldView = longHoldViews.get(i);
-            boolean viewInBounds = DimensionUtil.pointInViewBounds(longHoldView.getView(), downX, downY);
+    private fun checkLongHoldViews(position: Int) {
+        for (i in longHoldViews.indices) {
+            val longHoldView = longHoldViews[i]
+            val viewInBounds = DimensionUtil.pointInViewBounds(longHoldView.view, downX, downY)
 
-            if (viewInBounds && longHoldView.getLongHoldTimer() == null) {
-                long duration = customLongHoldDuration != -1 ? customLongHoldDuration : LONG_HOLD_DURATION;
-                longHoldView.startLongHoldViewTimer(this, position, duration);
-                onLongHoldListener.onEnter(longHoldView.getView(), position);
-            } else if (!viewInBounds && longHoldView.getLongHoldTimer() != null) {
-                longHoldView.getLongHoldTimer().cancel();
-                longHoldView.setLongHoldTimer(null);
+            if (viewInBounds && longHoldView.longHoldTimer == null) {
+                val duration = if (customLongHoldDuration != -1) customLongHoldDuration.toLong() else LONG_HOLD_DURATION
+                longHoldView.startLongHoldViewTimer(this, position, duration)
+                onLongHoldListener?.onEnter(longHoldView.view, position)
+            } else if (viewInBounds.not() && longHoldView.longHoldTimer != null) {
+                longHoldView.longHoldTimer?.cancel()
+                longHoldView.longHoldTimer = null
             }
         }
     }
-
 
     /**
      * Check all the HoldAndRelease views to see if they are being held and if so for how long
@@ -253,41 +195,38 @@ public class PeekAndPop {
      *
      * @param position
      */
-    private void checkHoldAndReleaseViews(final int position) {
-        for (int i = 0; i < holdAndReleaseViews.size(); i++) {
-            final HoldAndReleaseView holdAndReleaseView = holdAndReleaseViews.get(i);
-            boolean viewInBounds = DimensionUtil.pointInViewBounds(holdAndReleaseView.getView(), downX, downY);
+    private fun checkHoldAndReleaseViews(position: Int) {
+        for (i in holdAndReleaseViews.indices) {
+            val holdAndReleaseView = holdAndReleaseViews[i]
+            val viewInBounds = DimensionUtil.pointInViewBounds(holdAndReleaseView.view, downX, downY)
 
-            if (viewInBounds && holdAndReleaseView.getHoldAndReleaseTimer() == null) {
-                holdAndReleaseView.startHoldAndReleaseTimer(this, position, HOLD_AND_RELEASE_DURATION);
-            } else if (!viewInBounds && holdAndReleaseView.getHoldAndReleaseTimer() != null) {
-                holdAndReleaseView.getHoldAndReleaseTimer().cancel();
-                holdAndReleaseView.setHoldAndReleaseTimer(null);
-                if (holdAndReleaseView == currentHoldAndReleaseView) {
-                    triggerOnLeaveEvent(holdAndReleaseView.getView(), holdAndReleaseView.getPosition());
-                    holdAndReleaseView.setPosition(-1);
-                    currentHoldAndReleaseView = null;
+            if (viewInBounds && holdAndReleaseView.holdAndReleaseTimer == null) {
+                holdAndReleaseView.startHoldAndReleaseTimer(this, position, HOLD_AND_RELEASE_DURATION)
+            } else if (viewInBounds.not() && holdAndReleaseView.holdAndReleaseTimer != null) {
+                holdAndReleaseView.holdAndReleaseTimer?.cancel()
+                holdAndReleaseView.holdAndReleaseTimer = null
+
+                if (holdAndReleaseView === currentHoldAndReleaseView) {
+                    triggerOnLeaveEvent(holdAndReleaseView.view, holdAndReleaseView.position)
+                    holdAndReleaseView.position = -1
+                    currentHoldAndReleaseView = null
                 }
             }
         }
     }
 
-    public void sendOnLongHoldEvent(final View view, final int position) {
-        builder.activity.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                onLongHoldListener.onLongHold(view, position);
-            }
-        });
+    fun sendOnLongHoldEvent(view: View?, position: Int) {
+        usedBuilder?.activity?.runOnUiThread { onLongHoldListener?.onLongHold(view, position) }
     }
 
     /**
      * Initialise the peek view original position to be centred in the middle of the screen.
      */
-    private void initialisePeekViewOriginalPosition() {
-        peekViewOriginalPosition = new float[2];
-        peekViewOriginalPosition[0] = (peekLayout.getWidth() / 2) - (peekView.getWidth() / 2);
-        peekViewOriginalPosition[1] = (peekLayout.getHeight() / 2) - (peekView.getHeight() / 2) + peekViewMargin;
+    private fun initialisePeekViewOriginalPosition() {
+        peekViewOriginalPosition = floatArrayOf(
+                (peekLayout.width / 2 - peekView.width / 2).toFloat(),
+                (peekLayout.height / 2 - peekView.height / 2 + peekViewMargin).toFloat()
+        )
     }
 
     /**
@@ -296,30 +235,24 @@ public class PeekAndPop {
      * @param longClickView the view that was long clicked
      * @param index         the view that long clicked
      */
-    protected void peek(@NonNull View longClickView, int index) {
-        if (onGeneralActionListener != null)
-            onGeneralActionListener.onPeek(longClickView, index);
+    private fun peek(longClickView: View, index: Int) {
+        onGeneralActionListener?.onPeek(longClickView, index)
+        peekLayout.visibility = View.VISIBLE
+        cancelClick(longClickView)
 
-        peekLayout.setVisibility(View.VISIBLE);
+        if (isBlurBackground) {
+            blurBackground()
+        }
 
-        cancelClick(longClickView);
+        peekAnimationHelper.animatePeek(ANIMATION_PEEK_DURATION)
 
-        if (Build.VERSION.SDK_INT >= 17 && blurBackground)
-            blurBackground();
-        else if (Build.VERSION.SDK_INT < 17 && blurBackground)
-            Log.e("PeekAndPop", "Unable to blur background, device version below 17");
-
-        peekAnimationHelper.animatePeek(ANIMATION_PEEK_DURATION);
-
-        if (builder.parentViewGroup != null)
-            builder.parentViewGroup.requestDisallowInterceptTouchEvent(true);
+        usedBuilder?.parentViewGroup?.requestDisallowInterceptTouchEvent(true)
 
         // Reset the touch coordinates to prevent accidental long hold actions on long hold views
-        downX = 0;
-        downY = 0;
-
-        gestureListener.setView(longClickView);
-        gestureListener.setPosition(index);
+        downX = 0
+        downY = 0
+        gestureListener.setView(longClickView)
+        gestureListener.setPosition(index)
     }
 
     /**
@@ -328,22 +261,22 @@ public class PeekAndPop {
      *
      * @param longClickView the view that was long clicked
      */
-    private void cancelClick(@NonNull View longClickView) {
-        MotionEvent e = MotionEvent.obtain(SystemClock.uptimeMillis(),
+    private fun cancelClick(longClickView: View) {
+        val e = MotionEvent.obtain(
+                SystemClock.uptimeMillis(),
                 SystemClock.uptimeMillis(),
                 MotionEvent.ACTION_CANCEL,
-                0, 0, 0);
-        longClickView.onTouchEvent(e);
-        e.recycle();
+                0f, 0f, 0
+        )
+        longClickView.onTouchEvent(e)
+        e.recycle()
     }
 
-    private void blurBackground() {
-        if (Build.VERSION.SDK_INT >= 16) {
-            peekLayout.setBackground(null);
-            peekLayout.setBackground(new BitmapDrawable(builder.activity.getResources(), BlurBuilder.blur(contentView)));
-        }else {
-            peekLayout.setBackgroundDrawable(null);
-            peekLayout.setBackgroundDrawable(new BitmapDrawable(builder.activity.getResources(), BlurBuilder.blur(contentView)));
+    private fun blurBackground() {
+        peekLayout.background = null
+
+        usedBuilder?.let {
+            peekLayout.background = BitmapDrawable(it.activity.resources, BlurBuilder.blur(contentView))
         }
     }
 
@@ -354,114 +287,84 @@ public class PeekAndPop {
      * @param longClickView the view that was long clicked
      * @param index         the view that long clicked
      */
-    protected void pop(@NonNull View longClickView, int index) {
-        if (onGeneralActionListener != null)
-            onGeneralActionListener.onPop(longClickView, index);
+    private fun pop(longClickView: View, index: Int) {
+        onGeneralActionListener?.onPop(longClickView, index)
+        currentHoldAndReleaseView?.let {
+            onHoldAndReleaseListener?.onRelease(it.view, it.position)
+        }
 
-        if (currentHoldAndReleaseView != null && onHoldAndReleaseListener != null)
-            onHoldAndReleaseListener.onRelease(currentHoldAndReleaseView.getView(), currentHoldAndReleaseView.getPosition());
-
-        resetTimers();
-
-        peekAnimationHelper.animatePop(new Animator.AnimatorListener() {
-            @Override
-            public void onAnimationStart(Animator animation) {
+        resetTimers()
+        peekAnimationHelper.animatePop(object : AnimatorListener {
+            override fun onAnimationStart(animation: Animator) {}
+            override fun onAnimationEnd(animation: Animator) {
+                resetViews()
+                animation.cancel()
             }
 
-            @Override
-            public void onAnimationEnd(Animator animation) {
-                resetViews();
-                animation.cancel();
-            }
-
-            @Override
-            public void onAnimationCancel(Animator animation) {
-            }
-
-            @Override
-            public void onAnimationRepeat(Animator animation) {
-            }
-        }, ANIMATION_POP_DURATION);
-
-        popTime = System.currentTimeMillis();
+            override fun onAnimationCancel(animation: Animator) {}
+            override fun onAnimationRepeat(animation: Animator) {}
+        }, ANIMATION_POP_DURATION)
+        popTime = System.currentTimeMillis()
     }
 
     /**
      * Reset all views back to their initial values, this done after the onPeek has popped.
      */
-    private void resetViews() {
-        peekLayout.setVisibility(View.GONE);
-        downX = 0;
-        downY = 0;
+    private fun resetViews() {
+        peekLayout.visibility = View.GONE
+        downX = 0
+        downY = 0
 
-        for (int i = 0; i < longHoldViews.size(); i++) {
-            Timer longHoldTimer = longHoldViews.get(i).getLongHoldTimer();
+        for (i in longHoldViews.indices) {
+            val longHoldTimer = longHoldViews[i].longHoldTimer
+
             if (longHoldTimer != null) {
-                longHoldTimer.cancel();
-                longHoldViews.get(i).setLongHoldTimer(null);
+                longHoldTimer.cancel()
+                longHoldViews[i].longHoldTimer = null
             }
         }
 
         if (peekViewOriginalPosition != null) {
-            peekView.setX(peekViewOriginalPosition[0]);
-            peekView.setY(peekViewOriginalPosition[1]);
+            peekView.x = peekViewOriginalPosition!![0]
+            peekView.y = peekViewOriginalPosition!![1]
         }
-        peekView.setScaleX(0.85f);
-        peekView.setScaleY(0.85f);
+
+        peekView.scaleX = 0.85f
+        peekView.scaleY = 0.85f
     }
 
-    private void resetTimers() {
-        currentHoldAndReleaseView = null;
-        for (HoldAndReleaseView holdAndReleaseView : holdAndReleaseViews) {
-            if (holdAndReleaseView.getHoldAndReleaseTimer() != null)
-                holdAndReleaseView.getHoldAndReleaseTimer().cancel();
+    private fun resetTimers() {
+        currentHoldAndReleaseView = null
+        for (holdAndReleaseView in holdAndReleaseViews) {
+            holdAndReleaseView.holdAndReleaseTimer?.cancel()
         }
-        for (LongHoldView longHoldView : longHoldViews) {
-            if (longHoldView.getLongHoldTimer() != null)
-                longHoldView.getLongHoldTimer().cancel();
+
+        for (longHoldView in longHoldViews) {
+            longHoldView.longHoldTimer?.cancel()
         }
     }
 
-    public void destroy() {
+    fun destroy() {
         if (currentHoldAndReleaseView != null && onHoldAndReleaseListener != null) {
-            currentHoldAndReleaseView.getHoldAndReleaseTimer().cancel();
-            currentHoldAndReleaseView = null;
+            currentHoldAndReleaseView?.holdAndReleaseTimer?.cancel()
+            currentHoldAndReleaseView = null
         }
 
-        for (int i = 0; i < longHoldViews.size(); i++) {
-            Timer longHoldTimer = longHoldViews.get(i).getLongHoldTimer();
+        for (i in longHoldViews.indices) {
+            val longHoldTimer = longHoldViews[i].longHoldTimer
+
             if (longHoldTimer != null) {
-                longHoldTimer.cancel();
-                longHoldViews.get(i).setLongHoldTimer(null);
+                longHoldTimer.cancel()
+                longHoldViews[i].longHoldTimer = null
             }
         }
 
-        builder = null;
+        usedBuilder = null
     }
 
-    public void setFlingTypes(boolean allowUpwardsFling, boolean allowDownwardsFling) {
-        this.allowUpwardsFling = allowUpwardsFling;
-        this.allowDownwardsFling = allowDownwardsFling;
-    }
-
-    public void setCurrentHoldAndReleaseView(@Nullable HoldAndReleaseView currentHoldAndReleaseView) {
-        this.currentHoldAndReleaseView = currentHoldAndReleaseView;
-    }
-
-    public void setOnFlingToActionListener(@Nullable OnFlingToActionListener onFlingToActionListener) {
-        this.onFlingToActionListener = onFlingToActionListener;
-    }
-
-    public void setOnGeneralActionListener(@Nullable OnGeneralActionListener onGeneralActionListener) {
-        this.onGeneralActionListener = onGeneralActionListener;
-    }
-
-    public void setOnLongHoldListener(@Nullable OnLongHoldListener onLongHoldListener) {
-        this.onLongHoldListener = onLongHoldListener;
-    }
-
-    public void setOnHoldAndReleaseListener(@Nullable OnHoldAndReleaseListener onHoldAndReleaseListener) {
-        this.onHoldAndReleaseListener = onHoldAndReleaseListener;
+    fun setFlingTypes(allowUpwardsFling: Boolean, allowDownwardsFling: Boolean) {
+        this.allowUpwardsFling = allowUpwardsFling
+        this.allowDownwardsFling = allowDownwardsFling
     }
 
     /**
@@ -469,10 +372,10 @@ public class PeekAndPop {
      *
      * @param view     view to receive events
      * @param position add position of view if in a list, this will be returned in the general action listener
-     *                 and drag to action listener.
+     * and drag to action listener.
      */
-    public void addLongClickView(@NonNull View view, int position) {
-        initialiseGestureListener(view, position);
+    fun addLongClickView(view: View, position: Int) {
+        initialiseGestureListener(view, position)
     }
 
     /**
@@ -482,8 +385,8 @@ public class PeekAndPop {
      * @param longHoldViewId id of the view to receive on long hold events
      * @return
      */
-    public void addLongHoldView(@IdRes int longHoldViewId, boolean receiveMultipleEvents) {
-        longHoldViews.add(new LongHoldView(peekView.findViewById(longHoldViewId), receiveMultipleEvents));
+    fun addLongHoldView(@IdRes longHoldViewId: Int, receiveMultipleEvents: Boolean) {
+        longHoldViews.add(LongHoldView(peekView.findViewById(longHoldViewId), receiveMultipleEvents))
     }
 
     /**
@@ -491,94 +394,46 @@ public class PeekAndPop {
      * onHold() - when the view is held for a small amount of time
      * onLeave() - when the view is no longer held but the user is is still touching the screen
      * onRelease() - when the user releases after holding the view
-     * <p/>
+     *
+     *
      * You can add multiple HoldAndRelease views
      *
      * @param holdAndReleaseViewId id of the view to receive on long hold events
      * @return
      */
-    public void addHoldAndReleaseView(@IdRes int holdAndReleaseViewId) {
-        holdAndReleaseViews.add(new HoldAndReleaseView(peekView.findViewById(holdAndReleaseViewId)));
+    fun addHoldAndReleaseView(@IdRes holdAndReleaseViewId: Int) {
+        holdAndReleaseViews.add(HoldAndReleaseView(peekView.findViewById(holdAndReleaseViewId)))
     }
 
-    public void triggerOnHoldEvent(@NonNull final View view, final int position) {
-        new Handler(Looper.getMainLooper()).post(new Runnable() {
-            @Override
-            public void run() {
-                onHoldAndReleaseListener.onHold(view, position);
-            }
-        });
+    fun triggerOnHoldEvent(view: View, position: Int) {
+        Handler(Looper.getMainLooper()).post { onHoldAndReleaseListener!!.onHold(view, position) }
     }
 
-    protected void triggerOnLeaveEvent(@NonNull final View view, final int position) {
-        new Handler(Looper.getMainLooper()).post(new Runnable() {
-            @Override
-            public void run() {
-                onHoldAndReleaseListener.onLeave(view, position);
-            }
-        });
+    private fun triggerOnLeaveEvent(view: View, position: Int) {
+        Handler(Looper.getMainLooper()).post { onHoldAndReleaseListener!!.onLeave(view, position) }
     }
 
-    public View getPeekView() {
-        return peekView;
-    }
-
-    public boolean isBlurBackground() {
-        return blurBackground;
-    }
-
-    public void setBlurBackground(boolean blurBackground) {
-        this.blurBackground = blurBackground;
-    }
-
-    public boolean isAnimateFling() {
-        return animateFling;
-    }
-
-    public void setAnimateFling(boolean animateFling) {
-        this.animateFling = animateFling;
-    }
-
-    public void setLongHoldDuration(int duration) {
-        this.customLongHoldDuration = duration;
-    }
-
-    public boolean isEnabled() {
-        return enabled;
-    }
-
-    public void setEnabled(boolean enabled) {
-        this.enabled = enabled;
+    fun setLongHoldDuration(duration: Int) {
+        customLongHoldDuration = duration
     }
 
     /**
      * Builder class used for creating the PeekAndPop view.
      */
-
-    public static class Builder {
-
-        // essentials
-        protected final Activity activity;
-        protected int peekLayoutId = -1;
+    class Builder(val activity: Activity) {
+        var peekLayoutId = -1
 
         // optional extras
-        protected ViewGroup parentViewGroup;
-        protected ArrayList<View> longClickViews;
-
-        protected OnFlingToActionListener onFlingToActionListener;
-        protected OnGeneralActionListener onGeneralActionListener;
-        protected OnLongHoldListener onLongHoldListener;
-        protected OnHoldAndReleaseListener onHoldAndReleaseListener;
-
-        protected boolean blurBackground = true;
-        protected boolean animateFling = true;
-        protected boolean allowUpwardsFling = true;
-        protected boolean allowDownwardsFling = true;
-
-        public Builder(@NonNull Activity activity) {
-            this.activity = activity;
-            this.longClickViews = new ArrayList<>();
-        }
+        var parentViewGroup: ViewGroup? = null
+        var longClickViews: ArrayList<View> = ArrayList()
+        var onFlingToActionListener: OnFlingToActionListener? = null
+        var onGeneralActionListener: OnGeneralActionListener? = null
+        var onLongHoldListener: OnLongHoldListener? = null
+        var onHoldAndReleaseListener: OnHoldAndReleaseListener? = null
+        var blurBackground = true
+        var animateFling = true
+        var allowUpwardsFling = true
+        var allowDownwardsFling = true
 
         /**
          * Peek layout resource id, which will be inflated into the onPeek view
@@ -586,9 +441,9 @@ public class PeekAndPop {
          * @param peekLayoutId id of the onPeek layout resource
          * @return
          */
-        public Builder peekLayout(@LayoutRes int peekLayoutId) {
-            this.peekLayoutId = peekLayoutId;
-            return this;
+        fun peekLayout(@LayoutRes peekLayoutId: Int): Builder {
+            this.peekLayoutId = peekLayoutId
+            return this
         }
 
         /**
@@ -597,11 +452,9 @@ public class PeekAndPop {
          * @param longClickViews One or more views to handle on long click events
          * @return
          */
-        public Builder longClickViews(@NonNull View... longClickViews) {
-            for (int i = 0; i < longClickViews.length; i++) {
-                this.longClickViews.add(longClickViews[i]);
-            }
-            return this;
+        fun longClickViews(vararg longClickViews: View): Builder {
+            Collections.addAll(this.longClickViews, *longClickViews)
+            return this
         }
 
         /**
@@ -610,9 +463,9 @@ public class PeekAndPop {
          * @param onFlingToActionListener
          * @return
          */
-        public Builder onFlingToActionListener(@NonNull OnFlingToActionListener onFlingToActionListener) {
-            this.onFlingToActionListener = onFlingToActionListener;
-            return this;
+        fun onFlingToActionListener(onFlingToActionListener: OnFlingToActionListener): Builder {
+            this.onFlingToActionListener = onFlingToActionListener
+            return this
         }
 
         /**
@@ -621,11 +474,10 @@ public class PeekAndPop {
          * @param onGeneralActionListener
          * @return
          */
-        public Builder onGeneralActionListener(@NonNull OnGeneralActionListener onGeneralActionListener) {
-            this.onGeneralActionListener = onGeneralActionListener;
-            return this;
+        fun onGeneralActionListener(onGeneralActionListener: OnGeneralActionListener): Builder {
+            this.onGeneralActionListener = onGeneralActionListener
+            return this
         }
-
 
         /**
          * A listener for the on long hold views to receive onLongHold actions.
@@ -633,9 +485,9 @@ public class PeekAndPop {
          * @param onLongHoldListener
          * @return
          */
-        public Builder onLongHoldListener(@NonNull OnLongHoldListener onLongHoldListener) {
-            this.onLongHoldListener = onLongHoldListener;
-            return this;
+        fun onLongHoldListener(onLongHoldListener: OnLongHoldListener): Builder {
+            this.onLongHoldListener = onLongHoldListener
+            return this
         }
 
         /**
@@ -644,9 +496,9 @@ public class PeekAndPop {
          * @param onHoldAndReleaseListener
          * @return
          */
-        public Builder onHoldAndReleaseListener(@NonNull OnHoldAndReleaseListener onHoldAndReleaseListener) {
-            this.onHoldAndReleaseListener = onHoldAndReleaseListener;
-            return this;
+        fun onHoldAndReleaseListener(onHoldAndReleaseListener: OnHoldAndReleaseListener): Builder {
+            this.onHoldAndReleaseListener = onHoldAndReleaseListener
+            return this
         }
 
         /**
@@ -657,9 +509,9 @@ public class PeekAndPop {
          * @param parentViewGroup The parentView that you wish to disallow touch events to (Usually a scroll view, recycler view etc.)
          * @return
          */
-        public Builder parentViewGroupToDisallowTouchEvents(@NonNull ViewGroup parentViewGroup) {
-            this.parentViewGroup = parentViewGroup;
-            return this;
+        fun parentViewGroupToDisallowTouchEvents(parentViewGroup: ViewGroup): Builder {
+            this.parentViewGroup = parentViewGroup
+            return this
         }
 
         /**
@@ -669,9 +521,9 @@ public class PeekAndPop {
          * @param blurBackground
          * @return
          */
-        public Builder blurBackground(boolean blurBackground) {
-            this.blurBackground = blurBackground;
-            return this;
+        fun blurBackground(blurBackground: Boolean): Builder {
+            this.blurBackground = blurBackground
+            return this
         }
 
         /**
@@ -680,18 +532,18 @@ public class PeekAndPop {
          * @param animateFling
          * @return
          */
-        public Builder animateFling(boolean animateFling) {
-            this.animateFling = animateFling;
-            return this;
+        fun animateFling(animateFling: Boolean): Builder {
+            this.animateFling = animateFling
+            return this
         }
 
         /**
          * Set the accepted fling types, defaults to both being true.
          */
-        public Builder flingTypes(boolean allowUpwardsFling, boolean allowDownwardsFling) {
-            this.allowUpwardsFling = allowUpwardsFling;
-            this.allowDownwardsFling = allowDownwardsFling;
-            return this;
+        fun flingTypes(allowUpwardsFling: Boolean, allowDownwardsFling: Boolean): Builder {
+            this.allowUpwardsFling = allowUpwardsFling
+            this.allowDownwardsFling = allowDownwardsFling
+            return this
         }
 
         /**
@@ -699,40 +551,34 @@ public class PeekAndPop {
          *
          * @return the PeekAndPop object
          */
-        public PeekAndPop build() {
-            if (peekLayoutId == -1) {
-                throw new IllegalArgumentException("No peekLayoutId specified.");
-            }
-            return new PeekAndPop(this);
+        fun build(): PeekAndPop {
+            require(peekLayoutId != -1) { "No peekLayoutId specified." }
+            return PeekAndPop(this)
         }
     }
 
-    protected class PeekAndPopOnTouchListener implements View.OnTouchListener {
+    private inner class PeekAndPopOnTouchListener(private var position: Int) : OnTouchListener {
+        private var longHoldRunnable: Runnable? = null
+        private var peekShown = false
 
-        private int position;
-        private Runnable longHoldRunnable;
-        private boolean peekShown;
-
-        public PeekAndPopOnTouchListener(int position) {
-            this.position = position;
-        }
-
-        @Override
-        public boolean onTouch(final View view, MotionEvent event) {
-            if (!enabled) return false;
-
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                peekShown = false;
-                cancelPendingTimer(view);
-                startTimer(view);
-            } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
-                cancelPendingTimer(view);
+        override fun onTouch(view: View, event: MotionEvent): Boolean {
+            if (isEnabled.not()) {
+                return false
             }
 
-            if (peekShown)
-                handleTouch(view, event, position);
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                peekShown = false
+                cancelPendingTimer(view)
+                startTimer(view)
+            } else if (event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL) {
+                cancelPendingTimer(view)
+            }
 
-            return peekShown;
+            if (peekShown) {
+                handleTouch(view, event, position)
+            }
+
+            return peekShown
         }
 
         /**
@@ -741,18 +587,16 @@ public class PeekAndPop {
          *
          * @param view
          */
-        private void cancelPendingTimer(@NonNull final View view) {
-            longHoldTimer.cancel();
+        private fun cancelPendingTimer(view: View) {
+            longHoldTimer.cancel()
+
             if (longHoldRunnable != null) {
-                longHoldRunnable = new Runnable() {
-                    @Override
-                    public void run() {
-                        peekShown = false;
-                        pop(view, position);
-                        longHoldRunnable = null;
-                    }
-                };
-                builder.activity.runOnUiThread(longHoldRunnable);
+                longHoldRunnable = Runnable {
+                    peekShown = false
+                    pop(view, position)
+                    longHoldRunnable = null
+                }
+                usedBuilder?.activity?.runOnUiThread(longHoldRunnable)
             }
         }
 
@@ -761,113 +605,113 @@ public class PeekAndPop {
          *
          * @param view
          */
-        private void startTimer(@NonNull final View view) {
-            longHoldTimer = new Timer();
-            longHoldTimer.schedule(new TimerTask() {
-                @Override
-                public void run() {
-                    peekShown = true;
-                    longHoldRunnable = new Runnable() {
-                        @Override
-                        public void run() {
-                            if (peekShown) {
-                                peek(view, position);
-                                longHoldRunnable = null;
-                            }
+        private fun startTimer(view: View) {
+            longHoldTimer = Timer()
+            longHoldTimer.schedule(object : TimerTask() {
+                override fun run() {
+                    peekShown = true
+                    longHoldRunnable = Runnable {
+                        if (peekShown) {
+                            peek(view, position)
+                            longHoldRunnable = null
                         }
-                    };
-                    builder.activity.runOnUiThread(longHoldRunnable);
+                    }
+                    usedBuilder?.activity?.runOnUiThread(longHoldRunnable)
                 }
-            }, LONG_CLICK_DURATION);
+            }, LONG_CLICK_DURATION)
         }
 
-        public void setPosition(int position) {
-            this.position = position;
+        fun setPosition(position: Int) {
+            this.position = position
         }
     }
 
-    protected class GestureListener extends GestureDetector.SimpleOnGestureListener {
+    private inner class GestureListener : SimpleOnGestureListener() {
+        private var position = 0
+        private var view: View? = null
 
-        private int position;
-        private View view;
-
-        public void setView(View view) {
-            this.view = view;
+        fun setView(view: View?) {
+            this.view = view
         }
 
-        public void setPosition(int position) {
-            this.position = position;
+        fun setPosition(position: Int) {
+            this.position = position
         }
 
-        @Override
-        public boolean onDown(MotionEvent e) {
-            return true;
+        override fun onDown(e: MotionEvent): Boolean {
+            return true
         }
 
-        @Override
-        public boolean onFling(MotionEvent firstEvent, MotionEvent secondEvent, float velocityX, float velocityY) {
-            if (onFlingToActionListener != null)
-                return handleFling(velocityX, velocityY);
-            else
-                return true;
+        override fun onFling(firstEvent: MotionEvent, secondEvent: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+            return if (onFlingToActionListener != null) handleFling(velocityX, velocityY) else true
         }
 
-        private boolean handleFling(float velocityX, float velocityY) {
+        private fun handleFling(velocityX: Float, velocityY: Float): Boolean {
             if (orientation == Configuration.ORIENTATION_PORTRAIT) {
                 if (velocityY < -FLING_VELOCITY_THRESHOLD && allowUpwardsFling) {
-                    flingToAction(FLING_UPWARDS, velocityX, velocityY);
-                    return false;
+                    flingToAction(FLING_UPWARDS, velocityX, velocityY)
+                    return false
                 } else if (velocityY > FLING_VELOCITY_THRESHOLD && allowDownwardsFling) {
-                    flingToAction(FLING_DOWNWARDS, velocityX, velocityY);
-                    return false;
+                    flingToAction(FLING_DOWNWARDS, velocityX, velocityY)
+                    return false
                 }
             } else if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
                 if (velocityX < -FLING_VELOCITY_THRESHOLD && allowUpwardsFling) {
-                    flingToAction(FLING_UPWARDS, velocityX, velocityY);
-                    return false;
+                    flingToAction(FLING_UPWARDS, velocityX, velocityY)
+                    return false
                 } else if (velocityX > FLING_VELOCITY_THRESHOLD && allowDownwardsFling) {
-                    flingToAction(FLING_DOWNWARDS, velocityX, velocityY);
-                    return false;
+                    flingToAction(FLING_DOWNWARDS, velocityX, velocityY)
+                    return false
                 }
             }
-            return true;
+
+            return true
         }
 
-        private void flingToAction(@FlingDirections int direction, float velocityX, float velocityY) {
-            onFlingToActionListener.onFlingToAction(view, position, direction);
-            if (animateFling) {
+        private fun flingToAction(@FlingDirections direction: Int, velocityX: Float, velocityY: Float) {
+            onFlingToActionListener!!.onFlingToAction(view, position, direction)
+
+            if (isAnimateFling) {
                 if (direction == FLING_UPWARDS) {
-                    peekAnimationHelper.animateExpand(ANIMATION_POP_DURATION, popTime);
-                    peekAnimationHelper.animateFling(velocityX, velocityY, ANIMATION_POP_DURATION, popTime, -FLING_VELOCITY_MAX);
+                    peekAnimationHelper.animateExpand(ANIMATION_POP_DURATION, popTime)
+                    peekAnimationHelper.animateFling(velocityX, velocityY, ANIMATION_POP_DURATION, popTime, -FLING_VELOCITY_MAX)
                 } else {
-                    peekAnimationHelper.animateFling(velocityX, velocityY, ANIMATION_POP_DURATION, popTime, FLING_VELOCITY_MAX);
+                    peekAnimationHelper.animateFling(velocityX, velocityY, ANIMATION_POP_DURATION, popTime, FLING_VELOCITY_MAX)
                 }
             }
         }
     }
 
-    public interface OnFlingToActionListener {
-        void onFlingToAction(View longClickView, int position, int direction);
+    interface OnFlingToActionListener {
+        fun onFlingToAction(longClickView: View?, position: Int, direction: Int)
     }
 
-    public interface OnGeneralActionListener {
-        void onPeek(View longClickView, int position);
-
-        void onPop(View longClickView, int position);
+    interface OnGeneralActionListener {
+        fun onPeek(longClickView: View?, position: Int)
+        fun onPop(longClickView: View?, position: Int)
     }
 
-    public interface OnLongHoldListener {
-        void onEnter(View view, int position);
-
-        void onLongHold(View view, int position);
+    interface OnLongHoldListener {
+        fun onEnter(view: View?, position: Int)
+        fun onLongHold(view: View?, position: Int)
     }
 
-    public interface OnHoldAndReleaseListener {
-        void onHold(View view, int position);
-
-        void onLeave(View view, int position);
-
-        void onRelease(View view, int position);
+    interface OnHoldAndReleaseListener {
+        fun onHold(view: View?, position: Int)
+        fun onLeave(view: View?, position: Int)
+        fun onRelease(view: View?, position: Int)
     }
 
+    companion object {
+        const val FLING_UPWARDS = 0
+        const val FLING_DOWNWARDS = 1
+        private const val PEEK_VIEW_MARGIN = 12
+        private const val LONG_CLICK_DURATION: Long = 200
+        private const val LONG_HOLD_DURATION: Long = 850
+        private const val HOLD_AND_RELEASE_DURATION: Long = 50
+        private const val FLING_VELOCITY_THRESHOLD = 3000
+        private const val FLING_VELOCITY_MAX = 1000f
+        private const val ANIMATION_PEEK_DURATION = 275
+        private const val ANIMATION_POP_DURATION = 250
+    }
 }
